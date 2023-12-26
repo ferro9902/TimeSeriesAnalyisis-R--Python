@@ -1,0 +1,124 @@
+---
+title: "Time Series Analysis and Forecasting Project"
+author: "Feroldi Francesco"
+---
+
+# STEP 1: IMPORT AND ORGANIZE DATA FROM FS
+
+```{r include=FALSE}
+Sys.setlocale("LC_TIME", "C")
+# Load libraries
+library(dplyr)
+library(lubridate)
+library(ggplot2)
+
+# data sources
+daily_dataset <- "C:\\Users\\ferol\\Documents\\programming\\TimeSeriesAnalyisis R+ Python\\archive\\daily_dataset.csv"
+informations_households <- "C:\\Users\\ferol\\Documents\\programming\\TimeSeriesAnalyisis R+ Python\\archive\\informations_households.csv"
+uk_bank_holidays <- "C:\\Users\\ferol\\Documents\\programming\\TimeSeriesAnalyisis R+ Python\\archive\\uk_bank_holidays.csv"
+weather_daily_darksky <- "C:\\Users\\ferol\\Documents\\programming\\TimeSeriesAnalyisis R+ Python\\archive\\weather_daily_darksky.csv"
+
+# import the csv file
+daily_dataset <- read.csv(daily_dataset)
+informations_households <- read.csv(informations_households)
+uk_bank_holidays <- read.csv(uk_bank_holidays)
+weather_daily_darksky <- read.csv(weather_daily_darksky)
+
+# flag UK holiday days and add DOW and DOY columns, wile filtering for duplicate values
+daily_dataset_augmented <- daily_dataset %>%
+  mutate(
+    isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
+    day = as.Date(day, format = "%Y-%m-%d"),
+    dayOfWeek = weekdays(day),
+    dayOfYear = as.numeric(strftime(day, format = "%j")),
+    consumption = energy_sum
+  )
+
+# add sunlight hours column to weather_daily_darksky
+weather_daily_darksky <- weather_daily_darksky %>%
+  mutate(
+    sunlightHours = difftime(sunsetTime, sunriseTime, units = "hours"),
+    weather_condition = icon
+  )
+
+# Convert weather time column to date
+weather_daily_darksky$day <- as.Date(weather_daily_darksky$time)
+weather_daily_darksky <- weather_daily_darksky[!duplicated(weather_daily_darksky$day), ]
+
+# Merge datasets and select only useful columns
+daily_dataset_merged <- daily_dataset_augmented %>%
+  inner_join(informations_households, by = "LCLid") %>%
+  inner_join(weather_daily_darksky, by = c("day" = "day")) %>%
+  select(
+    LCLid,
+    day,
+    consumption,
+    isUkHoliday,
+    dayOfWeek,
+    dayOfYear,
+    stdorToU,
+    weather_condition,
+    cloudCover,
+    windSpeed,
+    precipType,
+    uvIndex,
+    sunlightHours,
+    temperatureLow,
+    temperatureMin,
+    temperatureHigh,
+    temperatureMax
+  )
+```
+
+# STEP 2: DATA EXPLORATION, DATA CLEANING AND DATA TRANSFORMATION
+
+```{r fig.cap = "Daily Dataset density distribution", echo=FALSE}
+library(ggplot2)
+
+freq_table <- table(daily_dataset$day)
+freq_data <- as.data.frame(table(daily_dataset$day))
+freq_data$day <- as.Date(names(freq_table))
+
+threshold <- 0.75 * max(freq_data$Freq)
+
+ggplot(freq_data, aes(x = day, y = Freq)) +
+  geom_line() +
+  geom_hline(yintercept = threshold, linetype = "dashed", color = "red") +
+  labs(title = "Daily Dataset Frequency Plot", x = "Day", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r include=FALSE}
+# filtering values whose
+daily_dataset_filtered <- daily_dataset_merged[daily_dataset_merged$day %in% freq_data$day[freq_data$Freq >= threshold], ]
+
+unfiltered_data_points_mln <- round(nrow(daily_dataset_merged) / 1000000, 1)
+filtered_data_points_mln <- round(nrow(daily_dataset_filtered) / 1000000, 1)
+```
+The filtering process reduced the overall number of data points from `r unfiltered_data_points_mln`mln to `r filtered_data_points_mln`mln .
+
+```{r include=FALSE}
+# identifying missing values
+
+summary(daily_dataset_filtered)
+
+consumption_missing_values <- sum(is.na(daily_dataset_filtered$consumption))
+cloudCover_missing_values <- sum(is.na(daily_dataset_filtered$cloudCover))
+uvIndex_missing_values <- sum(is.na(daily_dataset_filtered$uvIndex))
+
+cc_uv_missing_values_dates <- unique(daily_dataset_filtered[is.na(daily_dataset_filtered$cloudCover) & is.na(daily_dataset_filtered$uvIndex), ]$day) # nolint: line_length_linter.
+consumption_missing_values_dates_num <- length(unique(daily_dataset_filtered[is.na(daily_dataset_filtered$consumption), ]$day)) # nolint: line_length_linter.
+
+all_values_cc_uv_missing_values_dates <- sum(daily_dataset_filtered$day == as.Date(cc_uv_missing_values_dates))
+```
+A few null values where identified in three different columns:
+
+* [`r consumption_missing_values`] from the Consumption column
+* [`r cloudCover_missing_values`] from the Cloud Coverage idex column
+* [`r uvIndex_missing_values`] from the Ultraviolet idex 
+
+The first is given by a few missing values distributed in `r consumption_missing_values_dates_num` different days.
+The other two variables however, have missing values representing the entirity of the values available for the `r format(cc_uv_missing_values_dates, format = "%dst of %B of %Y")` (`r uvIndex_missing_values` out of `r all_values_cc_uv_missing_values_dates` values).
+
+With this kind of dataset the use of most basic data imputation techniques can yeld misleading results as a chenge in the weather conditions varies the value of the variables grately.
+The two data imputation functions which might be able to offer the best outcome are the K-nearest neighbours and missForest data imputation functions.
