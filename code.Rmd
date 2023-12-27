@@ -7,6 +7,10 @@ author: "Feroldi Francesco"
 
 ```{r include=FALSE}
 Sys.setlocale("LC_TIME", "C")
+# packages to install
+# install.packages("imputeTS")
+# install.packages("FNN")
+
 # Load libraries
 library(dplyr)
 library(lubridate)
@@ -25,7 +29,7 @@ uk_bank_holidays <- read.csv(uk_bank_holidays)
 weather_daily_darksky <- read.csv(weather_daily_darksky)
 
 # flag UK holiday days and add DOW and DOY columns, wile filtering for duplicate values
-daily_dataset_augmented <- daily_dataset %>%
+daily_dataset.augmented <- daily_dataset %>%
   mutate(
     isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
     day = as.Date(day, format = "%Y-%m-%d"),
@@ -46,7 +50,7 @@ weather_daily_darksky$day <- as.Date(weather_daily_darksky$time)
 weather_daily_darksky <- weather_daily_darksky[!duplicated(weather_daily_darksky$day), ]
 
 # Merge datasets and select only useful columns
-daily_dataset_merged <- daily_dataset_augmented %>%
+daily_dataset.merged <- daily_dataset.augmented %>%
   inner_join(informations_households, by = "LCLid") %>%
   inner_join(weather_daily_darksky, by = c("day" = "day")) %>%
   select(
@@ -63,9 +67,7 @@ daily_dataset_merged <- daily_dataset_augmented %>%
     precipType,
     uvIndex,
     sunlightHours,
-    temperatureLow,
     temperatureMin,
-    temperatureHigh,
     temperatureMax
   )
 ```
@@ -90,26 +92,26 @@ ggplot(freq_data, aes(x = day, y = Freq)) +
 
 ```{r include=FALSE}
 # filtering values whose
-daily_dataset_filtered <- daily_dataset_merged[daily_dataset_merged$day %in% freq_data$day[freq_data$Freq >= threshold], ]
+daily_dataset.filtered <- daily_dataset.merged[daily_dataset.merged$day %in% freq_data$day[freq_data$Freq >= threshold], ]
 
-unfiltered_data_points_mln <- round(nrow(daily_dataset_merged) / 1000000, 1)
-filtered_data_points_mln <- round(nrow(daily_dataset_filtered) / 1000000, 1)
+unfiltered_data_points.mln <- round(nrow(daily_dataset.merged) / 1000000, 1)
+filtered_data_points.mln <- round(nrow(daily_dataset.filtered) / 1000000, 1)
 ```
-The filtering process reduced the overall number of data points from `r unfiltered_data_points_mln`mln to `r filtered_data_points_mln`mln .
+The filtering process reduced the overall number of data points from `r unfiltered_data_points.mln`mln to `r filtered_data_points.mln`mln .
 
 ```{r include=FALSE}
 # identifying missing values
 
-summary(daily_dataset_filtered)
+summary(daily_dataset.filtered)
 
-consumption_missing_values <- sum(is.na(daily_dataset_filtered$consumption))
-cloudCover_missing_values <- sum(is.na(daily_dataset_filtered$cloudCover))
-uvIndex_missing_values <- sum(is.na(daily_dataset_filtered$uvIndex))
+consumption_missing_values <- sum(is.na(daily_dataset.filtered$consumption))
+cloudCover_missing_values <- sum(is.na(daily_dataset.filtered$cloudCover))
+uvIndex_missing_values <- sum(is.na(daily_dataset.filtered$uvIndex))
 
-cc_uv_missing_values_dates <- unique(daily_dataset_filtered[is.na(daily_dataset_filtered$cloudCover) & is.na(daily_dataset_filtered$uvIndex), ]$day) # nolint: line_length_linter.
-consumption_missing_values_dates_num <- length(unique(daily_dataset_filtered[is.na(daily_dataset_filtered$consumption), ]$day)) # nolint: line_length_linter.
+cc_uv_missing_values.dates <- unique(daily_dataset.filtered[is.na(daily_dataset.filtered$cloudCover) & is.na(daily_dataset.filtered$uvIndex), ]$day) # nolint: line_length_linter.
+consumption_missing_values.dates.num <- length(unique(daily_dataset.filtered[is.na(daily_dataset.filtered$consumption), ]$day)) # nolint: line_length_linter.
 
-all_values_cc_uv_missing_values_dates <- sum(daily_dataset_filtered$day == as.Date(cc_uv_missing_values_dates))
+values_cc_uv_missing_values.dates <- sum(daily_dataset.filtered$day == as.Date(cc_uv_missing_values.dates))
 ```
 A few null values where identified in three different columns:
 
@@ -117,8 +119,54 @@ A few null values where identified in three different columns:
 * [`r cloudCover_missing_values`] from the Cloud Coverage idex column
 * [`r uvIndex_missing_values`] from the Ultraviolet idex 
 
-The first is given by a few missing values distributed in `r consumption_missing_values_dates_num` different days.
-The other two variables however, have missing values representing the entirity of the values available for the `r format(cc_uv_missing_values_dates, format = "%dst of %B of %Y")` (`r uvIndex_missing_values` out of `r all_values_cc_uv_missing_values_dates` values).
+The first is given by a few missing values distributed in `r consumption_missing_values.dates.num` different days.
+The other two variables however, have missing values representing the entirity of the values available for the `r format(cc_uv_missing_values.dates, format = "%dst of %B of %Y")` (`r uvIndex_missing_values` out of `r values_cc_uv_missing_values.dates` values).
 
 With this kind of dataset the use of most basic data imputation techniques can yeld misleading results as a chenge in the weather conditions varies the value of the variables grately.
-The two data imputation functions which might be able to offer the best outcome are the K-nearest neighbours and missForest data imputation functions.
+The two data imputation functions which might be able to produce the best outcome are the K-nearest neighbours and missForest data imputation functions.
+
+```{r include=FALSE}
+# cloudCover and uvIndex imputation of missing values
+library(imputeTS)
+library(FNN)
+
+daily_dataset.filtered.noNa<-data.frame(daily_dataset.filtered)
+daily_dataset.filtered.noNa$day_numeric <- as.numeric(daily_dataset.filtered.noNa$day)
+
+# Define the features for imputation
+features <- c("day_numeric", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin")
+
+#daily_dataset.filtered.noNa$consumption_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$consumption, k = 5)
+
+features <- c("day_numeric", "consumption", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin")
+
+#daily_dataset.filtered.noNa$uvIndex_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$uvIndex, k = 5)
+#daily_dataset.filtered.noNa$cloudCover_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$cloudCover, k = 5)
+```
+
+```{r include=FALSE}
+# analysis of trend and seasonality
+daily_dataset.consumption <- aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean)
+
+ts_consumption.year <- ts(na.omit(daily_dataset.consumption$x), frequency = 365)
+ts_consumption.year.decom <- decompose(ts_consumption.year, type="additive")
+
+plot( ts_consumption.year.decom )
+plot( ts_consumption.year.decom$x ) + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend, col="red")
+
+ts_consumption.year <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2013-12-31",]$x), frequency = 360)
+ts_consumption.year.decom <- decompose(ts_consumption.year, type="additive")
+
+
+mean <- mean(daily_dataset.merged$consumption, na.rm=TRUE)
+
+ts_consumption.year.decom$trend_noNa <- ts_consumption.year.decom$trend
+ts_consumption.year.decom$trend_noNa[is.na(ts_consumption.year.decom$trend_noNa)] <- mean
+ts_consumption.year.decom$random_noNa <- ts_consumption.year.decom$random
+ts_consumption.year.decom$random_noNa[is.na(ts_consumption.year.decom$random)] <- 0
+
+plot( ts_consumption.year.decom )
+plot( ts_consumption.year.decom$x ) + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend, col="red") + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend_noNa + ts_consumption.year.decom$random_noNa, col="red")
+
+```
+There is an immediately noticeable seasonal components with yearly frequency. There also is a considerable amount of variance related to the randomicity of the weather conditions mostly observed in specific periods of the year.
