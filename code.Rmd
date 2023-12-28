@@ -8,8 +8,8 @@ author: "Feroldi Francesco"
 ```{r include=FALSE}
 Sys.setlocale("LC_TIME", "C")
 # packages to install
-# install.packages("imputeTS")
-# install.packages("FNN")
+# install.packages("performanceEstimation")
+# install.packages("fpp3")
 
 # Load libraries
 library(dplyr)
@@ -116,57 +116,59 @@ values_cc_uv_missing_values.dates <- sum(daily_dataset.filtered$day == as.Date(c
 A few null values where identified in three different columns:
 
 * [`r consumption_missing_values`] from the Consumption column
-* [`r cloudCover_missing_values`] from the Cloud Coverage idex column
-* [`r uvIndex_missing_values`] from the Ultraviolet idex 
+* [`r cloudCover_missing_values`] from the Cloud Coverage index column
+* [`r uvIndex_missing_values`] from the Ultraviolet index 
 
 The first is given by a few missing values distributed in `r consumption_missing_values.dates.num` different days.
-The other two variables however, have missing values representing the entirity of the values available for the `r format(cc_uv_missing_values.dates, format = "%dst of %B of %Y")` (`r uvIndex_missing_values` out of `r values_cc_uv_missing_values.dates` values).
+The other two variables however, have missing values representing the entirety of the values available for the `r format(cc_uv_missing_values.dates, format = "%dst of %B of %Y")` (as the values were missing from the original table "weather_daily_darksky" where each row represents the weather conditions for one day).
 
-With this kind of dataset the use of most basic data imputation techniques can yeld misleading results as a chenge in the weather conditions varies the value of the variables grately.
-The two data imputation functions which might be able to produce the best outcome are the K-nearest neighbours and missForest data imputation functions.
+With this kind of dataset the use of most basic data imputation techniques can yield misleading results as a change in the weather conditions varies the value of the variables greatly.
+The two data imputation functions which might be able to produce the best outcome are the K-nearest neighbors and miss-forest data imputation functions.
 
-```{r include=FALSE}
+```{r include=FALSE} 
+
+library(performanceEstimation)
 # cloudCover and uvIndex imputation of missing values
-library(imputeTS)
-library(FNN)
+
+#imputate first the two values in the weather daily darskky table
+weather_daily_darksky$day_numeric <- as.numeric(weather_daily_darksky$day)
+weather_daily_darksky$sunlightHours_numeric <- as.numeric(weather_daily_darksky$sunlightHours)
+
+features <- c("temperatureMax", "temperatureMin", "windBearing", "dewPoint", "windSpeed", "pressure", "visibility", "humidity", "moonPhase", "sunlightHours_numeric", "day_numeric", "x")
+
+weather_daily_darksky$x <- as.numeric(weather_daily_darksky$uvIndex)
+weather_daily_darksky$uvIndex_imputed <- knnImp(weather_daily_darksky[, features], k = 5)$x
+
+daily_dataset.filtered.noNa$cloudCover_imputed <- knn(weather_daily_darksky[, features], weather_daily_darksky$cloudCover, k = 5)
 
 daily_dataset.filtered.noNa<-data.frame(daily_dataset.filtered)
 daily_dataset.filtered.noNa$day_numeric <- as.numeric(daily_dataset.filtered.noNa$day)
+daily_dataset.filtered.noNa <- na.omit(daily_dataset.filtered.noNa)
+
+daily_dataset.filtered.noNa <- daily_dataset.filtered.noNa %>% arrange(LCLid, day)
+daily_dataset.filtered.noNa <- daily_dataset.filtered.noNa %>% group_by(LCLid) %>% mutate(consumption_previous_day = lag(consumption))
 
 # Define the features for imputation
-features <- c("day_numeric", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin")
+features <- c("consumption_previous_day", "day_numeric", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin", "uvIndex", "cloudCover")
 
-#daily_dataset.filtered.noNa$consumption_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$consumption, k = 5)
-
-features <- c("day_numeric", "consumption", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin")
-
-#daily_dataset.filtered.noNa$uvIndex_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$uvIndex, k = 5)
-#daily_dataset.filtered.noNa$cloudCover_imputed <- knn(daily_dataset.filtered.noNa[, features], daily_dataset.filtered.noNa$cloudCover, k = 5)
+#daily_dataset.filtered.noNa$consumption_imputed <- KNNimp(data, k = 10, scale = TRUE, meth = "weighAvg", distData = daily_dataset.filtered.noNa)
 ```
 
 ```{r include=FALSE}
+library(fpp3)
+
 # analysis of trend and seasonality
 daily_dataset.consumption <- aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean)
 
-ts_consumption.year <- ts(na.omit(daily_dataset.consumption$x), frequency = 365)
-ts_consumption.year.decom <- decompose(ts_consumption.year, type="additive")
+ts_consumption.week <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day <= "2014-02-27",]$x), frequency = 7)
+ts_consumption.week.decom <- stl(ts_consumption.week,s.window="periodic")
+
+plot( ts_consumption.week.decom )
+
+ts_consumption.year <- ts(na.omit(ts_consumption.week.decom$time.series[, "trend"]), frequency = 365)
+ts_consumption.year.decom <- stl(ts_consumption.year,s.window="periodic")
 
 plot( ts_consumption.year.decom )
-plot( ts_consumption.year.decom$x ) + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend, col="red")
-
-ts_consumption.year <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2013-12-31",]$x), frequency = 360)
-ts_consumption.year.decom <- decompose(ts_consumption.year, type="additive")
-
-
-mean <- mean(daily_dataset.merged$consumption, na.rm=TRUE)
-
-ts_consumption.year.decom$trend_noNa <- ts_consumption.year.decom$trend
-ts_consumption.year.decom$trend_noNa[is.na(ts_consumption.year.decom$trend_noNa)] <- mean
-ts_consumption.year.decom$random_noNa <- ts_consumption.year.decom$random
-ts_consumption.year.decom$random_noNa[is.na(ts_consumption.year.decom$random)] <- 0
-
-plot( ts_consumption.year.decom )
-plot( ts_consumption.year.decom$x ) + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend, col="red") + lines(ts_consumption.year.decom$seasonal + ts_consumption.year.decom$trend_noNa + ts_consumption.year.decom$random_noNa, col="red")
 
 ```
-There is an immediately noticeable seasonal components with yearly frequency. There also is a considerable amount of variance related to the randomicity of the weather conditions mostly observed in specific periods of the year.
+There are two immediately noticeable seasonal components with both yearly and weekly frequency. There also is a considerable amount of variance related to the randomicity of the weather conditions (emphasized from the fact that the dataset has been recorded in London).
