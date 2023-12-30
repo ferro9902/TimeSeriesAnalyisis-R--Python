@@ -33,7 +33,7 @@ daily_dataset.augmented <- daily_dataset %>%
   mutate(
     isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
     day = as.Date(day, format = "%Y-%m-%d"),
-    dayOfWeek = weekdays(day),
+    dayOfWeek = wday(day, week_start=1),
     dayOfYear = as.numeric(strftime(day, format = "%j")),
     consumption = energy_sum
   )
@@ -63,7 +63,11 @@ daily_dataset.merged <- daily_dataset.augmented %>%
     stdorToU,
     weather_condition,
     cloudCover,
+    windBearing,
     windSpeed,
+    pressure,
+    visibility,
+    humidity,
     precipType,
     uvIndex,
     sunlightHours,
@@ -122,8 +126,8 @@ A few null values where identified in three different columns:
 The first is given by a few missing values distributed in `r consumption_missing_values.dates.num` different days.
 The other two variables however, have missing values representing the entirety of the values available for the `r format(cc_uv_missing_values.dates, format = "%dst of %B of %Y")` (as the values were missing from the original table "weather_daily_darksky" where each row represents the weather conditions for one day).
 
-With this kind of dataset the use of most basic data imputation techniques can yield misleading results as a change in the weather conditions varies the value of the variables greatly.
-The two data imputation functions which might be able to produce the best outcome are the K-nearest neighbors and miss-forest data imputation functions.
+With this kind of dataset the use basic data imputation techniques can yield misleading results as a change in the weather conditions varies the value of the variables greatly.
+The data imputation function which might be able to produce the best outcome is the K-nearest neighbors data imputation function.
 
 ```{r include=FALSE} 
 
@@ -131,27 +135,68 @@ library(performanceEstimation)
 # cloudCover and uvIndex imputation of missing values
 
 #imputate first the two values in the weather daily darskky table
-weather_daily_darksky$day_numeric <- as.numeric(weather_daily_darksky$day)
 weather_daily_darksky$sunlightHours_numeric <- as.numeric(weather_daily_darksky$sunlightHours)
 
-features <- c("temperatureMax", "temperatureMin", "windBearing", "dewPoint", "windSpeed", "pressure", "visibility", "humidity", "moonPhase", "sunlightHours_numeric", "day_numeric", "x")
+features <- c("temperatureMax", "temperatureMin", "windBearing", "dewPoint", "windSpeed", "pressure", "visibility", "humidity", "sunlightHours_numeric", "x")
 
 weather_daily_darksky$x <- as.numeric(weather_daily_darksky$uvIndex)
-weather_daily_darksky$uvIndex_imputed <- knnImp(weather_daily_darksky[, features], k = 5)$x
+weather_daily_darksky$uvIndex <- knnImp(weather_daily_darksky[, features], k = 10)$x
 
-daily_dataset.filtered.noNa$cloudCover_imputed <- knn(weather_daily_darksky[, features], weather_daily_darksky$cloudCover, k = 5)
+weather_daily_darksky$x <- as.numeric(weather_daily_darksky$cloudCover)
+weather_daily_darksky$cloudCover <- knnImp(weather_daily_darksky[, features], k = 10)$x
 
-daily_dataset.filtered.noNa<-data.frame(daily_dataset.filtered)
-daily_dataset.filtered.noNa$day_numeric <- as.numeric(daily_dataset.filtered.noNa$day)
-daily_dataset.filtered.noNa <- na.omit(daily_dataset.filtered.noNa)
+daily_dataset.filtered <- daily_dataset.filtered[, !(names(daily_dataset.filtered) %in% setdiff(colnames(weather_daily_darksky), "day"))]
 
-daily_dataset.filtered.noNa <- daily_dataset.filtered.noNa %>% arrange(LCLid, day)
-daily_dataset.filtered.noNa <- daily_dataset.filtered.noNa %>% group_by(LCLid) %>% mutate(consumption_previous_day = lag(consumption))
+daily_dataset.filtered <- daily_dataset.filtered %>%
+  inner_join(weather_daily_darksky, by = c("day" = "day")) %>%
+  select(
+    LCLid,
+    day,
+    consumption,
+    isUkHoliday,
+    dayOfWeek,
+    dayOfYear,
+    stdorToU,
+    weather_condition,
+    cloudCover,
+    windBearing,
+    windSpeed,
+    pressure,
+    visibility,
+    humidity,
+    precipType,
+    uvIndex,
+    sunlightHours,
+    temperatureMin,
+    temperatureMax,
+    sunlightHours_numeric
+  )
+
+daily_dataset.filtered$sunlightHours <- as.numeric(daily_dataset.filtered$sunlightHours)
 
 # Define the features for imputation
-features <- c("consumption_previous_day", "day_numeric", "dayOfWeek", "dayOfYear", "isUkHoliday", "temperatureMax", "temperatureMin", "uvIndex", "cloudCover")
+features <- c("dayOfYear", "dayOfWeek", "temperatureMax", "temperatureMin", "windBearing", "windSpeed", "pressure", "visibility", "humidity", "sunlightHours", "x", "uvIndex", "cloudCover")
 
-#daily_dataset.filtered.noNa$consumption_imputed <- KNNimp(data, k = 10, scale = TRUE, meth = "weighAvg", distData = daily_dataset.filtered.noNa)
+# imputate only for the given user
+LCLid.list <- unique(daily_dataset.filtered[is.na(daily_dataset.filtered$consumption), ]$LCLid)
+
+daily_dataset.filtered$x <- as.numeric(daily_dataset.filtered$consumption)
+
+for(lcl in LCLid.list) {
+  lcl_rows = daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, ]
+  readingsCount <- count(daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, ]$LCLid)$freq
+  if(readingsCount <= 100){
+    # if the number of values is not sufficient we remove the client
+    daily_dataset.filtered <- daily_dataset.filtered[!(daily_dataset.filtered$LCLid == lcl), ]
+  }else{
+    # otherwise we apply the imputation
+    daily_dataset.filtered.temp <- daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, features]
+    daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, features]$x <- knnImp(daily_dataset.filtered.temp, k = 10)$x
+  }
+}
+daily_dataset.filtered$consumption <- daily_dataset.filtered$x
+daily_dataset.filtered <- subset(daily_dataset.filtered, select = -x )
+
 ```
 
 ```{r include=FALSE}
