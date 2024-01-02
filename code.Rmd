@@ -215,9 +215,10 @@ For Ease of analisys we apply the seasonal decomposition on two exact years.
 ```{r echo=FALSE}
 
 # analysis of trend and seasonality
-daily_dataset.consumption <- aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean)
+daily_dataset.consumption <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
+daily_dataset.consumption <- daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2014-01-01",]
 
-ts_consumption.week <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2014-01-01",]$x), frequency = 7)
+ts_consumption.week <- ts(daily_dataset.consumption$x, frequency = 7)
 ts_consumption.week.decom <- stl(ts_consumption.week,s.window="periodic")
 
 plot( ts_consumption.week.decom , main="WEEKLY SEASONAL COMPONENTS DECOMPOSITION")
@@ -249,10 +250,56 @@ plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder 
 
 ```
 ```{r echo=FALSE}
+library(PerformanceAnalytics)
 
-ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 360)
+# remove non weather influenced components from daily_dataset.consumption
+daily_dataset.consumption$x <- daily_dataset.consumption$x - ts(na.omit(ts_consumption.week.decom$time.series[, "seasonal"]), frequency = 360) - ts(na.omit(ts_consumption.year.decom$time.series[, "trend"]), frequency = 360)
 
-plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder + ts_consumption.year.decom.seasonal, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE + YEARLY SEASONALITY")
+weather_daily_darksky <- subset(weather_daily_darksky, select = -x )
+
+daily_dataset.consumption <- daily_dataset.consumption %>%
+  inner_join(weather_daily_darksky, by = c("day" = "day")) %>%
+  select(
+    day,
+    x,
+    weather_condition,
+    cloudCover,
+    windBearing,
+    windSpeed,
+    pressure,
+    visibility,
+    humidity,
+    precipType,
+    uvIndex,
+    sunlightHours_numeric,
+    temperatureMin,
+    temperatureMax
+  )
+
+daily_dataset.consumption <- daily_dataset.consumption %>%
+  mutate(
+    isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
+    dayOfWeek = wday(day, week_start=1),
+    dayOfYear = as.numeric(strftime(day, format = "%j")),
+    consumption = x
+  )
+
+daily_dataset.consumption <- subset(daily_dataset.consumption, select = -x )
+
+weather_condition_sorted <- aggregate(daily_dataset.filtered$consumption, by=list(weather_condition=daily_dataset.filtered$weather_condition), FUN=mean)
+weather_condition_sorted <- weather_condition_sorted[order(weather_condition_sorted$x), ]$weather_condition
+
+daily_dataset.consumption$weather_condition <- match(daily_dataset.consumption$weather_condition, weather_condition_sorted)
+
+precipType_sorted <- aggregate(daily_dataset.filtered$consumption, by=list(precipType=daily_dataset.filtered$precipType), FUN=mean)
+precipType_sorted <- precipType_sorted[order(precipType_sorted$x), ]$precipType
+
+daily_dataset.consumption$precipType <- match(daily_dataset.consumption$precipType, precipType_sorted)
+
+chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "pearson")
+chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "kendall")
+chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "spearman")
+
 
 ```
 
