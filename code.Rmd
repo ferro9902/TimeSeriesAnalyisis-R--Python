@@ -3,6 +3,16 @@ title: "Time Series Analysis and Forecasting Project"
 author: "Feroldi Francesco"
 ---
 
+# assumptions
+
+This project is created to analyze the behaviour of a network of electricity consumers as a whole to understand the effect of heterogeneous variables on the consumption profile of the network.
+To do so we will work under the assumptions that:
+
+1) except for the first few months where clients where joining the network, the data is representative of the consumption of the whole network;
+2) clients have no consumption outside of what is reported in the dataset;
+3) missing values are due to communication issues between the smart meter and the operations center rather than due to no consumption from the client;
+4) the trend identified through yearly seasonal decomposition is due to de variation in the consumption behaviour of clients (acquisition of greener technology such as solar panels, LED light bulbs, better water heaters) rather than the weather conditions;
+
 # STEP 1: IMPORT AND ORGANIZE DATA FROM FS
 
 ```{r include=FALSE}
@@ -184,10 +194,10 @@ daily_dataset.filtered$x <- as.numeric(daily_dataset.filtered$consumption)
 
 for(lcl in LCLid.list) {
   lcl_rows = daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, ]
-  readingsCount <- count(daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, ]$LCLid)$freq
-  if(readingsCount <= 100){
-    # if the number of values is not sufficient we remove the client
-    daily_dataset.filtered <- daily_dataset.filtered[!(daily_dataset.filtered$LCLid == lcl), ]
+  readingsCount <- nrow(daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, ])
+  if(readingsCount <= 50){
+    # if the number of values is not sufficient we remove the null rows for the given client
+    daily_dataset.filtered <- daily_dataset.filtered[!(daily_dataset.filtered$LCLid == lcl & is.na(daily_dataset.filtered$consumption)), ]
   }else{
     # otherwise we apply the imputation
     daily_dataset.filtered.temp <- daily_dataset.filtered[daily_dataset.filtered$LCLid == lcl, features]
@@ -199,21 +209,51 @@ daily_dataset.filtered <- subset(daily_dataset.filtered, select = -x )
 
 ```
 
-```{r include=FALSE}
-library(fpp3)
+#STEP 3: EXPLORATORY ANALYSIS
+
+For Ease of analisys we apply the seasonal decomposition on two exact years.
+```{r echo=FALSE}
 
 # analysis of trend and seasonality
 daily_dataset.consumption <- aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean)
 
-ts_consumption.week <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day <= "2014-02-27",]$x), frequency = 7)
+ts_consumption.week <- ts(na.omit(daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2014-01-01",]$x), frequency = 7)
 ts_consumption.week.decom <- stl(ts_consumption.week,s.window="periodic")
 
-plot( ts_consumption.week.decom )
+plot( ts_consumption.week.decom , main="WEEKLY SEASONAL COMPONENTS DECOMPOSITION")
 
-ts_consumption.year <- ts(na.omit(ts_consumption.week.decom$time.series[, "trend"]), frequency = 365)
+ts_consumption.year <- ts(na.omit(ts_consumption.week.decom$time.series[, "trend"]), frequency = 360)
 ts_consumption.year.decom <- stl(ts_consumption.year,s.window="periodic")
 
-plot( ts_consumption.year.decom )
+plot( ts_consumption.year.decom , main="YEARLY SEASONAL COMPONENTS DECOMPOSITION" )
 
 ```
+The graphs are the result of the seasonal decomposition of the time series to extrapolate the weekly components, then feed the weekly trend component back to the seasonal decomposition function and extrapolate the yearly components.
 There are two immediately noticeable seasonal components with both yearly and weekly frequency. There also is a considerable amount of variance related to the randomicity of the weather conditions (emphasized from the fact that the dataset has been recorded in London).
+
+If we extract only the random components of the time series we can see that the variance is not constant but it is more pronounced during a given period of the year (roughly during the winter)
+```{r echo=FALSE}
+
+ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
+ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
+
+plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE")
+
+```
+To better pinpoint the effect of the wether conditions on the time series we will remove the weekly seasonality, and yearly trend from the time series (to only keep the components previously identified as variance and those who are most likely influenced by the weather conditions). ([ASSUMPTION n°4](#assumptions))
+```{r echo=FALSE}
+
+ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 360)
+
+plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder + ts_consumption.year.decom.seasonal, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE + YEARLY SEASONALITY")
+
+```
+```{r echo=FALSE}
+
+ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 360)
+
+plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder + ts_consumption.year.decom.seasonal, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE + YEARLY SEASONALITY")
+
+```
+
+#STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA, regression analysis)
