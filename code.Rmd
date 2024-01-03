@@ -249,8 +249,12 @@ ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.
 plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder + ts_consumption.year.decom.seasonal, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE + YEARLY SEASONALITY")
 
 ```
-```{r echo=FALSE}
+
+
+```{r include = FALSE}
 library(PerformanceAnalytics)
+library(Hmisc)
+library(corrplot)
 
 # remove non weather influenced components from daily_dataset.consumption
 daily_dataset.consumption$x <- daily_dataset.consumption$x - ts(na.omit(ts_consumption.week.decom$time.series[, "seasonal"]), frequency = 360) - ts(na.omit(ts_consumption.year.decom$time.series[, "trend"]), frequency = 360)
@@ -285,7 +289,9 @@ daily_dataset.consumption <- daily_dataset.consumption %>%
   )
 
 daily_dataset.consumption <- subset(daily_dataset.consumption, select = -x )
-
+```
+To allow the measurement of the correlation level, some character variables have been converted in numeric by replacing their value with the index of said value inside of a vector (containing all values sorted by mean consumption).
+```{r message = FALSE}
 weather_condition_sorted <- aggregate(daily_dataset.filtered$consumption, by=list(weather_condition=daily_dataset.filtered$weather_condition), FUN=mean)
 weather_condition_sorted <- weather_condition_sorted[order(weather_condition_sorted$x), ]$weather_condition
 
@@ -295,12 +301,29 @@ precipType_sorted <- aggregate(daily_dataset.filtered$consumption, by=list(preci
 precipType_sorted <- precipType_sorted[order(precipType_sorted$x), ]$precipType
 
 daily_dataset.consumption$precipType <- match(daily_dataset.consumption$precipType, precipType_sorted)
-
-chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "pearson")
-chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "kendall")
-chart.Correlation(daily_dataset.consumption[, -1], histogram = TRUE, method = "spearman")
-
-
 ```
 
-#STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA, regression analysis)
+```{r echo = FALSE}
+corr_matrix.pearson <- rcorr(as.matrix(daily_dataset.consumption[, c(-1, -14)]), type = "pearson")
+corrplot(corr_matrix.pearson[[1]][1:14, 15, drop=FALSE], cl.pos='n', method = "number", mar=c(0,0,1,0) ,title = "Pearson correlation for consumption")
+
+```
+In the end the Pearson correlation coefficient has been chosen as it provided the correlation values with highest modulus for all variables.
+As we can see, having removed the weekly component of seasonality, the "dayOfWeek" endogeneous variable has next to no correlation with the consumption target variable. There is also a few other variables such as "windBearing" and "pressure" that, due to the limited amount of correlation with the target variable, will have a limited effect when evaluating the effect of weather conditions on consumption, so they will be removed when implementing neural networks to the time series.
+
+#STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA)
+
+```{r echo=FALSE}
+# apply holt-winters forecasting technique
+daily_dataset.tmp <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
+daily_dataset.tmp <- daily_dataset.tmp[daily_dataset.tmp$day >= "2012-01-01" & daily_dataset.tmp$day <= "2014-02-27",]
+
+ts_consumption.month <- ts(daily_dataset.tmp$x, frequency = 360)
+ts_consumption.month.HW <- HoltWinters(ts_consumption.month, seasonal = "multiplicative")
+
+ts_consumption.month.HW.predict <- predict(ts_consumption.month.HW, 360, prediction.interval = TRUE, level=0.5)
+
+plot(ts_consumption.month, ylab="consumption", xlim=c(1, 4.3), ylim=c(4, 16)) + lines(ts_consumption.month.HW$fitted[,1], lty=2, col="green") + lines(ts_consumption.month.HW.predict[,1], col="red") + lines(ts_consumption.month.HW.predict[,2], col="yellow") + lines(ts_consumption.month.HW.predict[,3], col="yellow")
+
+```
+very low confidence level (0.5) due to the high variance of the time series
