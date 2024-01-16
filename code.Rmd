@@ -20,6 +20,7 @@ Sys.setlocale("LC_TIME", "C")
 # packages to install
 # install.packages("performanceEstimation")
 # install.packages("fpp3")
+# install.packages("knitr")
 
 # Load libraries
 library(dplyr)
@@ -88,7 +89,7 @@ daily_dataset.merged <- daily_dataset.augmented %>%
 
 # STEP 2: DATA EXPLORATION, DATA CLEANING AND DATA TRANSFORMATION
 
-```{r fig.cap = "Daily Dataset density distribution", echo=FALSE}
+```{r fig.cap = "Daily Dataset density distribution", echo=FALSE, warning = FALSE, message = FALSE}
 library(ggplot2)
 
 freq_table <- table(daily_dataset$day)
@@ -212,7 +213,7 @@ daily_dataset.filtered <- subset(daily_dataset.filtered, select = -x )
 #STEP 3: EXPLORATORY ANALYSIS
 
 For Ease of analisys we apply the seasonal decomposition on two exact years.
-```{r echo=FALSE}
+```{r echo=FALSE, warning = FALSE, message = FALSE}
 
 # analysis of trend and seasonality
 daily_dataset.consumption <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
@@ -233,7 +234,7 @@ The graphs are the result of the seasonal decomposition of the time series to ex
 There are two immediately noticeable seasonal components with both yearly and weekly frequency. There also is a considerable amount of variance related to the randomicity of the weather conditions (emphasized from the fact that the dataset has been recorded in London).
 
 If we extract only the random components of the time series we can see that the variance is not constant but it is more pronounced during a given period of the year (roughly during the winter)
-```{r echo=FALSE}
+```{r echo=FALSE, warning = FALSE, message = FALSE}
 
 ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
 ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
@@ -242,7 +243,7 @@ plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder,
 
 ```
 To better pinpoint the effect of the wether conditions on the time series we will remove the weekly seasonality, and yearly trend from the time series (to only keep the components previously identified as variance and those who are most likely influenced by the weather conditions). ([ASSUMPTION n°4](#assumptions))
-```{r echo=FALSE}
+```{r echo=FALSE, warning = FALSE, message = FALSE}
 
 ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 360)
 
@@ -303,27 +304,146 @@ precipType_sorted <- precipType_sorted[order(precipType_sorted$x), ]$precipType
 daily_dataset.consumption$precipType <- match(daily_dataset.consumption$precipType, precipType_sorted)
 ```
 
-```{r echo = FALSE}
+```{r echo=FALSE, warning = FALSE, message = FALSE}
 corr_matrix.pearson <- rcorr(as.matrix(daily_dataset.consumption[, c(-1, -14)]), type = "pearson")
 corrplot(corr_matrix.pearson[[1]][1:14, 15, drop=FALSE], cl.pos='n', method = "number", mar=c(0,0,1,0) ,title = "Pearson correlation for consumption")
 
 ```
 In the end the Pearson correlation coefficient has been chosen as it provided the correlation values with highest modulus for all variables.
-As we can see, having removed the weekly component of seasonality, the "dayOfWeek" endogeneous variable has next to no correlation with the consumption target variable. There is also a few other variables such as "windBearing" and "pressure" that, due to the limited amount of correlation with the target variable, will have a limited effect when evaluating the effect of weather conditions on consumption, so they will be removed when implementing neural networks to the time series.
+As we can see, having removed the weekly component of seasonality, the "dayOfWeek" endogeneous variable has next to no correlation with the consumption target variable. There is also a few other variables such as "windBearing" and "pressure" that, due to the limited amount of correlation with the target variable, will have a limited effect when evaluating the effect of weather conditions on consumption, so they will be removed when implementing neural networks or forecasting techniques to predict the time series future values.
 
 #STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA)
 
-```{r echo=FALSE}
+```{r echo=FALSE, warning = FALSE, message = FALSE, fig.show="hold", out.width="50%"}
+library(forecast)
+
 # apply holt-winters forecasting technique
 daily_dataset.tmp <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
 daily_dataset.tmp <- daily_dataset.tmp[daily_dataset.tmp$day >= "2012-01-01" & daily_dataset.tmp$day <= "2014-02-27",]
 
 ts_consumption.month <- ts(daily_dataset.tmp$x, frequency = 360)
-ts_consumption.month.HW <- HoltWinters(ts_consumption.month, seasonal = "multiplicative")
+ts_consumption.month.HW <- HoltWinters(ts_consumption.month, seasonal = "additive")
 
+#forecast one year into the future
 ts_consumption.month.HW.predict <- predict(ts_consumption.month.HW, 360, prediction.interval = TRUE, level=0.5)
 
-plot(ts_consumption.month, ylab="consumption", xlim=c(1, 4.3), ylim=c(4, 16)) + lines(ts_consumption.month.HW$fitted[,1], lty=2, col="green") + lines(ts_consumption.month.HW.predict[,1], col="red") + lines(ts_consumption.month.HW.predict[,2], col="yellow") + lines(ts_consumption.month.HW.predict[,3], col="yellow")
+x<-plot(ts_consumption.month, ylab="consumption", xlim=c(1, 4.2), ylim=c(4.5, 16.5), main="holt-winters forecast") + lines(ts_consumption.month.HW$fitted[,1], lty=2, col="blue") + lines(ts_consumption.month.HW.predict[,1], col="orange") + lines(ts_consumption.month.HW.predict[,2], col="green") + lines(ts_consumption.month.HW.predict[,3], col="red")
+
+##############################################
+# apply ARIMA forecasting technique
+ts_consumption.month.ARIMA <- auto.arima(ts_consumption.month)
+
+#forecast one year into the future
+ts_consumption.month.ARIMA.predict <- forecast(ts_consumption.month.ARIMA, h = 360, level = 90)
+
+plot(ts_consumption.month.ARIMA.predict, ylab = "consumption", xlim = c(1, 4.2), ylim = c(4.5, 16.5), main="ARIMA forecast") 
+lines(window(fitted(ts_consumption.month.ARIMA, start = 2), start = 2), col = "blue", lty = 2)
 
 ```
-very low confidence level (0.5) due to the high variance of the time series
+
+very low confidence level on the holt winters model (0.5) due to the high variance of the time series while the arima model has a far greater CL at 90%
+
+```{r echo=FALSE, warning = FALSE, message = FALSE}
+
+#apply regression analisys forecasting technique
+daily_dataset.tmp <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
+daily_dataset.tmp <- daily_dataset.tmp[daily_dataset.tmp$day >= "2012-01-01" & daily_dataset.tmp$day <= "2014-02-27",]
+daily_dataset.tmp <- daily_dataset.tmp %>%
+  mutate(
+    isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
+    dayOfWeek = wday(day, week_start=1),
+    dayOfYear = as.numeric(strftime(day, format = "%j")),
+    consumption = x
+  ) 
+daily_dataset.tmp <- daily_dataset.tmp %>%
+  inner_join(weather_daily_darksky, by = c("day" = "day")) %>%
+  select(
+    day,
+    x,
+    dayOfWeek,
+    dayOfYear,
+    weather_condition,
+    cloudCover,
+    windSpeed,
+    visibility,
+    humidity,
+    precipType,
+    uvIndex,
+    temperatureMin,
+    temperatureMax,
+    sunlightHours_numeric
+  )
+daily_dataset.tmp$weather_condition <- match(daily_dataset.tmp$weather_condition, weather_condition_sorted)
+daily_dataset.tmp$precipType <- match(daily_dataset.tmp$precipType, precipType_sorted)
+
+# Prepare the data for multivariate regression
+model_data <- daily_dataset.tmp %>%
+  select(-day)  # Exclude the 'day' column for regression
+
+# Fit the multivariate regression model
+reg_analisys.model <- lm(x ~ ., data = model_data)
+
+plot_data <- data.frame(day = daily_dataset.tmp$day, observed = daily_dataset.tmp$x, predicted = predict(reg_analisys.model, daily_dataset.tmp))
+
+
+ggplot(plot_data, aes(x = day)) +
+  geom_line(aes(y = observed, color = "Observed"), size = 1) +
+  geom_line(aes(y = predicted, color = "Predicted"), size = 1, linetype = "dashed") +
+  labs(title = "regression analisys model",
+       x = "Day",
+       y = "Consumption") +
+  theme_minimal()
+
+```
+
+```{r echo=FALSE, warning = FALSE, message = FALSE}
+library(knitr)
+
+# Function to calculate PCPD
+pcpd <- function(actual, forecast) {
+  direction_actual <- diff(actual) > 0
+  direction_forecast <- diff(forecast) > 0
+  correct_direction <- sum(direction_actual == direction_forecast)
+  total_directions <- length(direction_actual) - 1  # Exclude the first data point
+  return(correct_direction / total_directions)
+}
+
+# Function to calculate R2
+RSQUARE = function(y_actual,y_predict){
+  cor(y_actual,y_predict)^2
+}
+
+# Calculate MAE and MSE for Holt-Winters model
+mae_hw <- mean(abs(ts_consumption.month - ts_consumption.month.HW$fitted[,1]))
+mse_hw <- mean((ts_consumption.month - ts_consumption.month.HW$fitted[,1])^2)
+bias_hw <- mean(ts_consumption.month - ts_consumption.month.HW$fitted[,1])
+pcpd_hw <- pcpd(window(ts_consumption.month, start = 2), ts_consumption.month.HW$fitted[,1])
+r_squared_hw <- RSQUARE(window(ts_consumption.month, start = 2), ts_consumption.month.HW$fitted[,1])
+
+# Calculate MAE and MSE for ARIMA model
+mae_arima <- mean(abs(ts_consumption.month - fitted(ts_consumption.month.ARIMA)))
+mse_arima <- mean((ts_consumption.month - fitted(ts_consumption.month.ARIMA))^2)
+bias_arima <- mean(ts_consumption.month - fitted(ts_consumption.month.ARIMA))
+pcpd_arima <- pcpd(ts_consumption.month, fitted(ts_consumption.month.ARIMA))
+r_squared_arima <- RSQUARE(ts_consumption.month, fitted(ts_consumption.month.ARIMA))
+
+# Calculate MAE and MSE for Regression Analysis model
+mae_reg <- mean(abs(plot_data$observed - plot_data$predicted))
+mse_reg <- mean((plot_data$observed - plot_data$predicted)^2)
+bias_reg <- mean(plot_data$observed - plot_data$predicted)
+pcpd_reg <- pcpd(plot_data$observed, plot_data$predicted)
+r_squared_reg <- RSQUARE(plot_data$observed, plot_data$predicted)
+
+# Create a data frame with the results
+results_df <- data.frame(
+  Model = c("Holt-Winters", "ARIMA", "Regression Analysis"),
+  MAE = c(mae_hw, mae_arima, mae_reg),
+  MSE = c(mse_hw, mse_arima, mse_reg),
+  Forecast_Bias = c(bias_hw, bias_arima, bias_reg),
+  PCPD = c(pcpd_hw, pcpd_arima, pcpd_reg),
+  R_squared = c(r_squared_hw, r_squared_arima, r_squared_reg)
+)
+
+# Display the results as a table
+kable(results_df, caption = "Model Comparison Results", format = "markdown")
+```
