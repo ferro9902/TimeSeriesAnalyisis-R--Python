@@ -11,7 +11,7 @@ To do so we will work under the assumptions that:
 1) except for the first few months where clients where joining the network, the data is representative of the consumption of the whole network;
 2) clients have no consumption outside of what is reported in the dataset;
 3) missing values are due to communication issues between the smart meter and the operations center rather than due to no consumption from the client;
-4) the trend identified through yearly seasonal decomposition is due to de variation in the consumption behaviour of clients (acquisition of greener technology such as solar panels, LED light bulbs, better water heaters) rather than the weather conditions;
+4) the trend identified through yearly seasonal decomposition is due to the variation in the consumption behaviour of clients (acquisition of greener technology such as solar panels, LED light bulbs, better water heaters) rather than the weather conditions;
 
 # STEP 1: IMPORT AND ORGANIZE DATA FROM FS
 
@@ -210,21 +210,21 @@ daily_dataset.filtered <- subset(daily_dataset.filtered, select = -x )
 
 ```
 
-#STEP 3: EXPLORATORY ANALYSIS
+# STEP 3: EXPLORATORY ANALYSIS
 
-For Ease of analisys we apply the seasonal decomposition on two exact years.
-```{r echo=FALSE, warning = FALSE, message = FALSE}
+For Ease of analisys we apply the seasonal decomposition on three years.
+```{r echo=FALSE, warning = FALSE, message = FALSE, fig.show="hold", out.width="50%"}
+
+daily_dataset.consumption <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
+daily_dataset.consumption <- daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2014-01-10",]
 
 # analysis of trend and seasonality
-daily_dataset.consumption <- na.omit(aggregate(daily_dataset.merged$consumption, by=list(day=daily_dataset.merged$day), FUN=mean))
-daily_dataset.consumption <- daily_dataset.consumption[daily_dataset.consumption$day >= "2012-01-01" & daily_dataset.consumption$day <= "2014-01-01",]
-
 ts_consumption.week <- ts(daily_dataset.consumption$x, frequency = 7)
 ts_consumption.week.decom <- stl(ts_consumption.week,s.window="periodic")
 
 plot( ts_consumption.week.decom , main="WEEKLY SEASONAL COMPONENTS DECOMPOSITION")
 
-ts_consumption.year <- ts(na.omit(ts_consumption.week.decom$time.series[, "trend"]), frequency = 360)
+ts_consumption.year <- ts(na.omit(ts_consumption.week.decom$time.series[, "trend"]), frequency = 364)
 ts_consumption.year.decom <- stl(ts_consumption.year,s.window="periodic")
 
 plot( ts_consumption.year.decom , main="YEARLY SEASONAL COMPONENTS DECOMPOSITION" )
@@ -236,16 +236,38 @@ There are two immediately noticeable seasonal components with both yearly and we
 If we extract only the random components of the time series we can see that the variance is not constant but it is more pronounced during a given period of the year (roughly during the winter)
 ```{r echo=FALSE, warning = FALSE, message = FALSE}
 
-ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
-ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 360)
+ts_consumption.week.decom.remainder <- ts(na.omit(ts_consumption.week.decom$time.series[, "remainder"]), frequency = 364)
+ts_consumption.year.decom.remainder <- ts(na.omit(ts_consumption.year.decom$time.series[, "remainder"]), frequency = 364)
 
-plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE")
+plot( ts_consumption.week.decom.remainder + ts_consumption.year.decom.remainder, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE")
 
 ```
+We then apply the spectral analysis on the resulting variance to verify that there is no further meaningful seasonality to be extracted from the time series:
+
+```{r echo=FALSE, warning = FALSE, message = FALSE, fig.show="hold", out.width="50%"}
+ts_consumption <- ts(daily_dataset.consumption$x)
+ts_variance_consumption <- ts(ts_consumption.week.decom.remainder + ts_consumption.year.decom.remainder)
+
+# Perform spectral analysis and extract frequency of seasonality
+spectrum(ts_consumption, span=5, log = c("no"))
+spec_result <- spectrum(ts_variance_consumption, span=5, log = c("no"), ylim=c(0, 248.5))
+
+freq <- spec_result$freq
+power <- spec_result$spec
+
+max_power_index <- which.max(power)
+
+# Extract the frequency corresponding to the maximum power
+max_frequency.period <- 1/freq[max_power_index]
+
+```
+As we can see the most important seasonal components have been extracted from the dataset. What remains is a seasonality with a "spectrum" value of a fraction of the observed yearly seasonality, and period
+equal to \(`r round(max_frequency.period, digits = 3)`\).
+
 To better pinpoint the effect of the wether conditions on the time series we will remove the weekly seasonality, and yearly trend from the time series (to only keep the components previously identified as variance and those who are most likely influenced by the weather conditions). ([ASSUMPTION n°4](#assumptions))
 ```{r echo=FALSE, warning = FALSE, message = FALSE}
 
-ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 360)
+ts_consumption.year.decom.seasonal <- ts(na.omit(ts_consumption.year.decom$time.series[, "seasonal"]), frequency = 364)
 
 plot( ts_consumption.week.decom.remainder + ts_consumption.week.decom.remainder + ts_consumption.year.decom.seasonal, xlab="Time (in YEARS)", ylab="consumption variance", main="WEEKLY VARIANCE + YEARLY VARIANCE + YEARLY SEASONALITY")
 
@@ -312,7 +334,7 @@ corrplot(corr_matrix.pearson[[1]][1:14, 15, drop=FALSE], cl.pos='n', method = "n
 In the end the Pearson correlation coefficient has been chosen as it provided the correlation values with highest modulus for all variables.
 As we can see, having removed the weekly component of seasonality, the "dayOfWeek" endogeneous variable has next to no correlation with the consumption target variable. There is also a few other variables such as "windBearing" and "pressure" that, due to the limited amount of correlation with the target variable, will have a limited effect when evaluating the effect of weather conditions on consumption, so they will be removed when implementing neural networks or forecasting techniques to predict the time series future values.
 
-#STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA)
+# STEP 4: APPLY FORECASTING TECHNIQUES (holt-winters, ARIMA, Regression Analysis)
 
 ```{r echo=FALSE, warning = FALSE, message = FALSE, fig.show="hold", out.width="50%"}
 library(forecast)
@@ -341,7 +363,7 @@ lines(window(fitted(ts_consumption.month.ARIMA, start = 2), start = 2), col = "b
 
 ```
 
-very low confidence level on the holt winters model (0.5) due to the high variance of the time series while the arima model has a far greater CL at 90%
+very low Confidence Level on the holt winters model (0.5) due to the high variance of the time series while the Arima model produces results with a far greater CL at 90%
 
 ```{r echo=FALSE, warning = FALSE, message = FALSE}
 
@@ -353,6 +375,7 @@ daily_dataset.tmp <- daily_dataset.tmp %>%
     isUkHoliday = as.numeric(day %in% uk_bank_holidays$Bank.holidays),
     dayOfWeek = wday(day, week_start=1),
     dayOfYear = as.numeric(strftime(day, format = "%j")),
+    year = as.numeric(strftime(day, format = "%Y")),
     consumption = x
   ) 
 daily_dataset.tmp <- daily_dataset.tmp %>%
@@ -362,6 +385,7 @@ daily_dataset.tmp <- daily_dataset.tmp %>%
     x,
     dayOfWeek,
     dayOfYear,
+    year,
     weather_condition,
     cloudCover,
     windSpeed,
@@ -395,6 +419,7 @@ ggplot(plot_data, aes(x = day)) +
   theme_minimal()
 
 ```
+# STEP 5: ASSESS FORECASTING TECHNIQUES
 
 ```{r echo=FALSE, warning = FALSE, message = FALSE}
 library(knitr)
@@ -447,3 +472,12 @@ results_df <- data.frame(
 # Display the results as a table
 kable(results_df, caption = "Model Comparison Results", format = "markdown")
 ```
+
+Given that the three models have different objectives, as HW and Ariama can be suitable to make predictions in the medium to long term (from a few months to 1 or 2 years) while the regression analysis is more suitable to make prediction in the short term (given that the weather conditions for the day have to be known), they over perform each others in different ways as shown by the metrics above.
+out of the models the one that exhibits the lowest overall error is the ARIMA models with an Mean Average Error of \(`r round(mae_arima, digits = 3)`\), a percentage of correct prediction direction of \(`r round(pcpd_arima*100, digits = 3)`\%\), and the most explained variance (\(`r round(r_squared_arima*100, digits = 3)`\%\) R-squared). At the same time it tends to produce more "large" errors than the Holt-Winters model (\(`r round(mse_arima, digits = 3)` > `r round(mse_hw, digits = 3)`\)). Both of these two models have some (even if still very limited when forecasting only a few consumers) amount of bias on their results toward the conservative side, opposite to the RA model whose mean error seems to be spot on.
+
+Overall, whenever the objective is to forecast the consumption of the distribution network as a whole or to predict the behaviour of a large population of consumers, the best use for these models would be to:
+1. adopt the Regression Analysis model to make predictions of up to one to two week into the future while still comparing its results with those obtained from the Arima model
+2. Use the Arima model for any other type of prediction
+
+# STEP 6: Time-Frequency Analysis
