@@ -3,3 +3,6 @@
 *.zip
 *.html
 /archive
+*.RDataTmp
+*.RData
+/bkp
